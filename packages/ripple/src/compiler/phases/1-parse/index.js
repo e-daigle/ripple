@@ -278,6 +278,9 @@ function RipplePlugin(config) {
 									);
 								}
 
+								this.start = this.pos;
+          						this.startLoc = this.curPosition();
+          						chunkStart = this.pos;
 								// Continue processing from current position
 								break;
 							} else if (this.input.charCodeAt(this.pos + 1) === 42) {
@@ -315,6 +318,9 @@ function RipplePlugin(config) {
 									);
 								}
 
+								this.start = this.pos;
+          						this.startLoc = this.curPosition();
+          						chunkStart = this.pos;
 								// Continue processing from current position
 								break;
 							}
