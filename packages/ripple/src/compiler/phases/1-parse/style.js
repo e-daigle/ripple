@@ -14,8 +14,10 @@ const regex_whitespace = /\s/;
 
 class Parser {
 	index = 0;
+	base = 0;
+	onComment = null;
 
-	constructor(template, loose) {
+	constructor(template, loose, base = 0, { onComment = null } = {}) {
 		if (typeof template !== 'string') {
 			throw new TypeError('Template must be a string');
 		}
@@ -23,7 +25,11 @@ class Parser {
 		this.loose = loose;
 		this.template_untrimmed = template;
 		this.template = template.trimEnd();
+		this.onComment = onComment;
+		this.base = base;   
 	}
+
+	pos() { return this.base + this.index; }
 
 	match(str) {
 		const length = str.length;
@@ -85,14 +91,15 @@ class Parser {
 		return this.template.slice(start);
 	}
 }
-
-export function parse_style(content) {
-	const parser = new Parser(content, false);
+export function parse_style(content, base = 0, opts = {}) {
+	const parser = new Parser(content, false, base, opts);
 
 	return {
 		source: content,
 		hash: `ripple-${hash(content)}`,
 		type: 'StyleSheet',
+		start: base,
+		end: base + content.length,
 		body: read_body(parser),
 	};
 }
@@ -101,8 +108,13 @@ function allow_comment_or_whitespace(parser) {
 	parser.allow_whitespace();
 	while (parser.match('/*') || parser.match('<!--')) {
 		if (parser.eat('/*')) {
-			parser.read_until(REGEX_COMMENT_CLOSE);
+			const start = parser.pos();
+			const text = parser.read_until(REGEX_COMMENT_CLOSE);
 			parser.eat('*/', true);
+			const end = parser.pos();
+			if (parser.onComment) {
+				parser.onComment(true, text, start -2, end);
+			}
 		}
 
 		if (parser.eat('<!--')) {
@@ -131,7 +143,7 @@ function read_body(parser) {
 }
 
 function read_at_rule(parser) {
-	const start = parser.index;
+	const start = parser.pos();
 	parser.eat('@', true);
 
 	const name = read_identifier(parser);
@@ -152,7 +164,7 @@ function read_at_rule(parser) {
 	return {
 		type: 'Atrule',
 		start,
-		end: parser.index,
+		end: parser.pos(),
 		name,
 		prelude,
 		block
@@ -160,14 +172,14 @@ function read_at_rule(parser) {
 }
 
 function read_rule(parser) {
-	const start = parser.index;
+	const start = parser.pos();
 
 	return {
 		type: 'Rule',
 		prelude: read_selector_list(parser),
 		block: read_block(parser),
 		start,
-		end: parser.index,
+		end: parser.pos(),
 		metadata: {
 			parent_rule: null,
 			has_local_selectors: false,
@@ -177,7 +189,7 @@ function read_rule(parser) {
 }
 
 function read_block(parser) {
-	const start = parser.index;
+	const start = parser.pos();
 
 	parser.eat('{', true);
 
@@ -199,7 +211,7 @@ function read_block(parser) {
 	return {
 		type: 'Block',
 		start,
-		end: parser.index,
+		end: parser.pos(),
 		children,
 	};
 }
@@ -220,7 +232,7 @@ function read_block_item(parser) {
 }
 
 function read_declaration(parser) {
-	const start = parser.index;
+	const start = parser.pos();
 
 	const property = parser.read_until(REGEX_WHITESPACE_OR_COLON);
 	parser.allow_whitespace();
@@ -234,16 +246,14 @@ function read_declaration(parser) {
 		e.css_empty_declaration({ start, end: index });
 	}
 
-	const end = parser.index;
-
-	if (!parser.match('}')) {
-		parser.eat(';', true);
-	}
+   	if (!parser.match('}')) {
+    	parser.eat(';', true);
+   	}
 
 	return {
 		type: 'Declaration',
 		start,
-		end,
+		end: parser.pos(),
 		property,
 		value,
 	};
@@ -291,12 +301,10 @@ function read_selector_list(parser, inside_pseudo_class = false) {
 
 	allow_comment_or_whitespace(parser);
 
-	const start = parser.index;
+	const start = parser.pos();
 
 	while (parser.index < parser.template.length) {
 		children.push(read_selector(parser, inside_pseudo_class));
-
-		const end = parser.index;
 
 		allow_comment_or_whitespace(parser);
 
@@ -304,7 +312,7 @@ function read_selector_list(parser, inside_pseudo_class = false) {
 			return {
 				type: 'SelectorList',
 				start,
-				end,
+				end: parser.pos(),
 				children,
 			};
 		} else {
@@ -317,30 +325,29 @@ function read_selector_list(parser, inside_pseudo_class = false) {
 }
 
 function read_combinator(parser) {
-	const start = parser.index;
+	const start = parser.pos();
 	parser.allow_whitespace();
 
 	const index = parser.index;
 	const name = parser.read(REGEX_COMBINATOR);
 
 	if (name) {
-		const end = parser.index;
 		parser.allow_whitespace();
 
 		return {
 			type: 'Combinator',
 			name,
-			start: index,
-			end,
+			start,
+			end: parser.pos(),
 		};
 	}
 
-	if (parser.index !== start) {
+	if (parser.index !== index) {
 		return {
 			type: 'Combinator',
 			name: ' ',
 			start,
-			end: parser.index,
+			end: parser.pos(),
 		};
 	}
 
@@ -374,17 +381,17 @@ function read_selector(parser, inside_pseudo_class = false) {
 	}
 
 	/** @type {AST.CSS.RelativeSelector} */
-	let relative_selector = create_selector(null, parser.index);
+	let relative_selector = create_selector(null, parser.pos());
 
 	while (parser.index < parser.template.length) {
-		let start = parser.index;
+		let start = parser.pos();
 
 		if (parser.eat('&')) {
 			relative_selector.selectors.push({
 				type: 'NestingSelector',
 				name: '&',
 				start,
-				end: parser.index,
+				end: parser.pos(),
 			});
 		} else if (parser.eat('*')) {
 			let name = '*';
@@ -398,28 +405,28 @@ function read_selector(parser, inside_pseudo_class = false) {
 				type: 'TypeSelector',
 				name,
 				start,
-				end: parser.index,
+				end: parser.pos(),
 			});
 		} else if (parser.eat('#')) {
 			relative_selector.selectors.push({
 				type: 'IdSelector',
 				name: read_identifier(parser),
 				start,
-				end: parser.index,
+				end: parser.pos(),
 			});
 		} else if (parser.eat('.')) {
 			relative_selector.selectors.push({
 				type: 'ClassSelector',
 				name: read_identifier(parser),
 				start,
-				end: parser.index,
+				end: parser.pos(),
 			});
 		} else if (parser.eat('::')) {
 			relative_selector.selectors.push({
 				type: 'PseudoElementSelector',
 				name: read_identifier(parser),
 				start,
-				end: parser.index,
+				end: parser.pos(),
 			});
 			// We read the inner selectors of a pseudo element to ensure it parses correctly,
 			// but we don't do anything with the result.
@@ -443,7 +450,7 @@ function read_selector(parser, inside_pseudo_class = false) {
 				name,
 				args,
 				start,
-				end: parser.index,
+				end: parser.pos(),
 			});
 		} else if (parser.eat('[')) {
 			parser.allow_whitespace();
@@ -470,7 +477,7 @@ function read_selector(parser, inside_pseudo_class = false) {
 			relative_selector.selectors.push({
 				type: 'AttributeSelector',
 				start,
-				end: parser.index,
+				end: parser.pos(),
 				name,
 				matcher,
 				value,
@@ -483,14 +490,14 @@ function read_selector(parser, inside_pseudo_class = false) {
 				type: 'Nth',
 				value: /**@type {string} */ (parser.read(REGEX_NTH_OF)),
 				start,
-				end: parser.index,
+				end: parser.pos(),
 			});
 		} else if (parser.match_regex(REGEX_PERCENTAGE)) {
 			relative_selector.selectors.push({
 				type: 'Percentage',
 				value: /** @type {string} */ (parser.read(REGEX_PERCENTAGE)),
 				start,
-				end: parser.index,
+				end: parser.pos(),
 			});
 		} else if (!parser.match_regex(REGEX_COMBINATOR)) {
 			let name = read_identifier(parser);
@@ -504,7 +511,7 @@ function read_selector(parser, inside_pseudo_class = false) {
 				type: 'TypeSelector',
 				name,
 				start,
-				end: parser.index,
+				end: parser.pos(),
 			});
 		}
 
@@ -515,13 +522,13 @@ function read_selector(parser, inside_pseudo_class = false) {
 			// rewind, so we know whether to continue building the selector list
 			parser.index = index;
 
-			relative_selector.end = index;
+			relative_selector.end = parser.pos();
 			children.push(relative_selector);
 
 			return {
 				type: 'ComplexSelector',
 				start: list_start,
-				end: index,
+				end: parser.pos(),
 				children,
 				metadata: {
 					rule: null,
@@ -535,7 +542,7 @@ function read_selector(parser, inside_pseudo_class = false) {
 
 		if (combinator) {
 			if (relative_selector.selectors.length > 0) {
-				relative_selector.end = index;
+				relative_selector.end = parser.pos();
 				children.push(relative_selector);
 			}
 
