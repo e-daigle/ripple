@@ -1,7 +1,7 @@
 import { parse } from 'ripple/compiler';
 import { doc } from 'prettier';
 
-const { concat, join, line, hardline, group, indent, dedent } = doc.builders;
+const { concat, join, line, hardline, group, indent, dedent, align } = doc.builders;
 
 // Embed function - not needed for now
 export function embed(path, options) {
@@ -49,7 +49,7 @@ export const printers = {
 		},
 		getVisitorKeys(node) {
 			const keys = Object.keys(node).filter((key) => {
-				return key === 'start' || key === 'end' || key === 'loc' || key === 'metadata'
+				return key === 'start' || key === 'end' || key === 'loc' || key === 'metadata' || key === 'css'
 					? false
 					: typeof node[key] === 'object' && node[key] !== null;
 			});
@@ -525,6 +525,9 @@ function printRippleNodeNoComments(node, path, options, print, args) {
 			const parts = ['{', path.call(print, 'expression'), '}'];
 			return parts;
 		}
+		
+		case 'JSXEmptyExpression': 
+			return ""
 
 		default:
 			// Fallback for unknown node types
@@ -1772,14 +1775,10 @@ function printStyleSheet(node, path, options, print) {
 
 		// Structure the CSS with proper indentation and spacing
 		// CSS rules need exactly 3 more spaces beyond the <style> element's indentation
-		return concat([
-			hardline,
-			indent([
-				'  ', // 2 spaces (indent gives 3, we need 5 total = +2)
-				join(concat([hardline, '']), cssItems), // 2 spaces for all CSS lines
-			]),
-			hardline,
-		]);
+  return concat([
+    align(2, concat([hardline, join(hardline, cssItems)])),
+    hardline,
+  ]);
 	}
 
 	// If no body, return empty string
@@ -1791,7 +1790,13 @@ function printCSSRule(node, path, options, print) {
 	const selector = path.call(print, 'prelude');
 	const block = path.call(print, 'block');
 
-	return group([selector, ' {', indent([hardline, block]), hardline, '}']);
+	return group([
+		selector,
+		' {',
+		align(2, concat([hardline, block])),
+		hardline,
+		'}',
+	]);
 }
 
 function printCSSDeclaration(node, path, options, print) {
@@ -1821,7 +1826,7 @@ function printCSSAtrule(node, path, options, print) {
 	if (node.block) {
 		const block = path.call(print, 'block');
 		parts.push(' {');
-		parts.push(indent([hardline, block]));
+		parts.push(align(2, concat([hardline, block])));
 		parts.push(hardline, '}');
 	} else {
 		parts.push(';');
@@ -1838,7 +1843,7 @@ function printCSSSelectorList(node, path, options, print) {
 			const selector = path.call(print, 'children', i);
 			selectors.push(selector);
 		}
-		return join(', ', selectors);
+		return join(concat([',', hardline]), selectors);
 	}
 	return '';
 }
@@ -1848,6 +1853,11 @@ function printCSSComplexSelector(node, path, options, print) {
 	if (node.children && node.children.length > 0) {
 		const selectorParts = [];
 		for (let i = 0; i < node.children.length; i++) {
+			const rel = node.children[i];
+			if (i > 0) {
+				const comb = rel && rel.combinator ? rel.combinator.name : ' ';
+				selectorParts.push(comb === ' ' ? ' ' : concat([' ', comb, ' ']));
+			}
 			const part = path.call(print, 'children', i);
 			selectorParts.push(part);
 		}

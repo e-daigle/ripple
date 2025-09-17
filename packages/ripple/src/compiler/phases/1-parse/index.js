@@ -427,7 +427,7 @@ function RipplePlugin(config) {
 						if (component.css !== null) {
 							throw new Error('Components can only have one style tag');
 						}
-						component.css = parse_style(content);
+						component.css = parse_style(content, start, { onComment: this.options.onComment });
 
 						this.pos = start + end + 1;
 						this.type = tok.jsxTagStart;
@@ -718,12 +718,17 @@ function get_comment_handlers(source, comments, index = 0) {
 						if (parent === undefined || node.end !== parent.end) {
 							const slice = source.slice(node.end, comments[0].start);
 							const is_last_in_body =
-								((parent?.type === 'BlockStatement' || parent?.type === 'Program') &&
-									parent.body.indexOf(node) === parent.body.length - 1) ||
-								(parent?.type === 'ArrayExpression' &&
-									parent.elements.indexOf(node) === parent.elements.length - 1) ||
-								(parent?.type === 'ObjectExpression' &&
-									parent.properties.indexOf(node) === parent.properties.length - 1);
+								((parent?.type === 'BlockStatement' || parent?.type === 'Program') 
+									&& parent.body.length > 1 
+									&& parent.body.indexOf(node) === parent.body.length - 1) ||
+								(parent?.type === 'ArrayExpression'
+									&& parent.elements.length > 1 
+									&& parent.elements.indexOf(node) === parent.elements.length - 1) ||
+								(parent?.type === 'ObjectExpression' 
+									&& parent.properties.length > 1 
+									&& parent.properties.indexOf(node) === parent.properties.length - 1);
+
+							const isIfOrForLoopClause = !!parent && (parent.test === node || parent.update === node);
 
 							if (is_last_in_body) {
 								// Special case: There can be multiple trailing comments after the last node in a block,
@@ -738,8 +743,20 @@ function get_comment_handlers(source, comments, index = 0) {
 									comments.shift();
 									end = comment.end;
 								}
-							} else if (node.end <= comments[0].start && /^[,) \t]*$/.test(slice)) {
-								node.trailingComments = [/** @type {CommentWithLocation} */ (comments.shift())];
+							}  else if(node.end <= comments[0].start && /^[,) \t]*$/.test(slice) ) {
+								let currSlice = slice;
+								while (comments[0] 
+									&& node.end <= comments[0].start 
+									&& /^[,) \t]*$/.test(currSlice) 
+									&& !(isIfOrForLoopClause && currSlice.includes(")"))) {
+									
+									comment = /** @type {CommentWithLocation} */ (comments.shift());
+									const commentEnd = comment.end;
+
+									(node.trailingComments ||= []).push(comment);
+
+									currSlice = source.slice(commentEnd, comments[0].start);
+								}
 							}
 						}
 					}
